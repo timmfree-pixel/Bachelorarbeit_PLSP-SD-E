@@ -1,0 +1,2 @@
+# Laufzeitabhaengigkeit des PLSP-SD-E-Modells
+gurobipy>=11.0
