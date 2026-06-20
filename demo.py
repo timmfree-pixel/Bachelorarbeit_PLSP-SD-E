@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from instanzen import (
     basis_instanz_k2_t4,
+    grosse_instanz_k6_t8,
     standby_instanz,
     aus_instanz,
     ruesten_im_aus_instanz,
@@ -25,6 +26,8 @@ from visualisierung import visualisiere
 DEMOS = {
     "basis": (basis_instanz_k2_t4, "PLSP-SD-E – Basisinstanz (K=2, T=4)",
               "uebersicht_basis.png"),
+    "gross": (grosse_instanz_k6_t8, "PLSP-SD-E – Große Testinstanz (K=6, T=8)",
+              "uebersicht_gross.png"),
     "3a_standby": (standby_instanz, "Verhaltenstest 3a – Standby (K=1, T=3)",
                    "uebersicht_3a_standby.png"),
     "3b_aus": (aus_instanz, "Verhaltenstest 3b – Abschalten (K=1, T=5)",

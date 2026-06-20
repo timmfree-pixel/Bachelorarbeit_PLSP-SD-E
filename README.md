@@ -57,6 +57,32 @@ pip install matplotlib
 python3 demo.py
 ```
 
+## Große Testinstanz (K=6, T=8)
+
+`instanzen.grosse_instanz_k6_t8()` ist eine realitätsnahe Instanz zum umfassenden Test
+des Vollmodells. Sechs Produkte mit **Familienstruktur** (A={1,2,3}, B={4,5,6}):
+Rüstwechsel innerhalb einer Familie sind günstig/emissionsarm, familienübergreifend
+teuer und asymmetrisch (A→B=3, B→A=4). Rüstkosten ≫ Lagerkosten erzeugen eine echte
+Losgrößen-Abwägung; eine fallende Gratiszuteilung (ETS-Verknappung) führt ins
+Netto-Käufer-Regime. Im Optimum (löst sofort, `Z≈325,7`) werden ausgelöst:
+
+- Losgrößenbildung mit Lagerhaltung **und** Produkt-Wiederbesuch,
+- familienweise gruppierte, sequenzabhängige Rüstwechsel (nur 2 familienübergreifend),
+- Leistungszustände **An und Aus** inkl. **Anschaltvorgang** (Wiederanlauf nach Stillstand),
+- Lager-Emissionen sowie Zertifikat-**Zukauf und -Verkauf** mit Banking auf dem Konto.
+
+```python
+from instanzen import grosse_instanz_k6_t8
+from modell import build_model
+from loesung import loese, zeige_loesung
+from visualisierung import visualisiere
+
+d = grosse_instanz_k6_t8()
+m = build_model(d); loese(m)
+zeige_loesung(m, d)
+visualisiere(m, d, titel="Große Testinstanz (K=6, T=8)", dateipfad="uebersicht_gross.png")
+```
+
 ## Spezifikations-Abgleich (1)–(15)
 
 | Nr. | Bedeutung | Code (`modell.py`) |

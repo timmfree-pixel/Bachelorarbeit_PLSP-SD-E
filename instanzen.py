@@ -6,6 +6,8 @@ Modelllogik. Jede Factory-Funktion liefert eine fertige :class:`instanz.Instanz`
 Enthalten sind:
 - ``basis_instanz_k2_t4``  : kleine, gut konditionierte Instanz (K=2, T=4) fuer den
                              Bau-/Loesungstest und den Reduktionstest.
+- ``grosse_instanz_k6_t8`` : grosse, realitaetsnahe Instanz (K=6, T=8) mit
+                             Produktfamilien zum umfassenden Test des Vollmodells.
 - ``standby_instanz``      : Verhaltenstest 3a (Standby ueberbrueckt kurzen Leerlauf).
 - ``aus_instanz``          : Verhaltenstest 3b (Abschalten ueberbrueckt langen Leerlauf).
 - ``ruesten_im_aus_instanz``: Verhaltenstest 3c (Ruestwechsel im Aus-Modus).
@@ -69,6 +71,100 @@ def basis_instanz_k2_t4() -> Instanz:
     e_on, e_sb, e_aus, e_an = 4.0, 2.0, 0.0, 3.0
     A = {t: 50.0 for t in perioden}
     pi_B, pi_S = 2.0, 1.0
+    J_0 = 10.0
+    y_0 = {k: 0.0 for k in produkte}
+
+    return Instanz(K=K, T=T, i_0=i_0, d=d, h=h, s=s, tb=tb, tr=tr, b=b,
+                   e_p=e_p, e_fix=e_fix, e_var=e_var, e_l=e_l,
+                   e_on=e_on, e_sb=e_sb, e_aus=e_aus, e_an=e_an,
+                   A=A, pi_B=pi_B, pi_S=pi_S, J_0=J_0, y_0=y_0)
+
+
+def grosse_instanz_k6_t8() -> Instanz:
+    """Grosse, realitaetsnahe Test-Instanz: 6 Produkte, 8 Mikroperioden.
+
+    Diese Instanz dient dazu, das vollstaendige PLSP-SD-E "einmal richtig" zu testen.
+    Alle sechs Produkte haben Nachfrage. Die Parameter sind oekonomisch konsistent
+    gewaehlt; insbesondere besitzen die Produkte eine **Familienstruktur**, die die
+    sequenzabhaengigen Ruestzeiten erst bedeutsam macht.
+
+    Struktur und gewaehlte Verhaeltnisse
+    ------------------------------------
+    - Familien: A = {1,2,3}, B = {4,5,6}.
+      * Ruestzeit tr_{ik}: innerhalb einer Familie guenstig (1), familienuebergreifend
+        teuer und **asymmetrisch** (A->B = 3, B->A = 4) -> echte Sequenzabhaengigkeit,
+        starker Anreiz zur Gruppierung nach Familie.
+      * Fixe Ruestemission e^{fix}_{ik}: innerhalb 0.5, familienuebergreifend 2.0.
+    - Ruestkosten s_k (8..15) >> Lagerkosten h_k (0.8..2.0) -> Losgroessen-Abwaegung
+      zwischen Batching (gross produzieren + lagern) und Wiederbesuch (erneut ruesten).
+    - Produktionszeit tb_k in [0.8, 1.5]; Kapazitaet b_t = 30 (moderat bindend).
+    - Emissionen: Produktion dominiert (e^p_k in [0.9, 2.2]); Leistungszustaende
+      e^{aus}=0 <= e^{sb}=2 <= e^{on}=5; Anschaltstoss e^{an}=3 (so ist ein 2-Perioden-
+      Stillstand per Abschalten billiger als Standby: 3 < 2*2).
+    - Zertifikate: pi^B=3 >= pi^S=2 (Geld-Brief-Spanne); **fallende** Gratiszuteilung
+      A_t = 22,20,...,8 (ETS-Verknappung) bei J_0=10. Die Gesamtzuteilung liegt unter
+      der Gesamtemission -> Netto-Kaeufer-Regime: Emissionsvermeidung lohnt sich.
+
+    Im Optimum ausgeloeste Modellmechanismen (Validierungszweck)
+    -----------------------------------------------------------
+    Losgroessenbildung mit Lagerhaltung und Produkt-Wiederbesuch; familienweise
+    gruppierte, sequenzabhaengige Ruestwechsel (nur 2 familienuebergreifende Wechsel);
+    Leistungszustaende An und **Aus** inkl. **Anschaltvorgang** (Wiederanlauf nach
+    Stillstand); Lager-Emissionen; Zertifikat-**Zukauf und -Verkauf** mit Banking auf
+    dem Zertifikatskonto.
+
+    Hinweis: Bei 6 nachgefragten Produkten und nur einem Ruestwechsel je Periode werden
+    ~6 Perioden zum Einruesten benoetigt; es verbleiben hoechstens 2 Leerlaufperioden,
+    die entweder einen 2-er-Aus-Block (-> Aus, wie hier) ODER zwei Einzel-Leerlaeufe
+    (-> Standby) bilden koennen, nie beides zugleich. Der Standby-Zustand wird daher
+    separat in ``standby_instanz`` (Verhaltenstest 3a) eindeutig demonstriert.
+    """
+    K, T, i_0 = 6, 8, 1
+    produkte = range(1, K + 1)
+    perioden = range(1, T + 1)
+
+    def familie(k: int) -> str:
+        return "A" if k <= 3 else "B"
+
+    # Sequenzabhaengige Ruestzeiten und fixe Ruestemissionen (Familienstruktur)
+    tr = {
+        (i, k): (0.0 if i == k
+                 else 1.0 if familie(i) == familie(k)
+                 else 3.0 if familie(i) == "A"   # A -> B
+                 else 4.0)                         # B -> A
+        for i in produkte for k in produkte
+    }
+    e_fix = {
+        (i, k): (0.0 if i == k
+                 else 0.5 if familie(i) == familie(k)
+                 else 2.0)
+        for i in produkte for k in produkte
+    }
+
+    # Bedarf d_{kt} (Zeilen = Produkte, Spalten = Perioden 1..8); jedes Produkt hat Bedarf
+    bedarf = {
+        1: [5, 0, 4, 0, 0, 4, 0, 0],
+        2: [4, 4, 0, 0, 3, 0, 0, 4],
+        3: [0, 5, 4, 0, 0, 0, 4, 0],
+        4: [0, 0, 6, 5, 0, 0, 4, 0],
+        5: [0, 0, 0, 5, 6, 0, 0, 4],
+        6: [0, 0, 0, 0, 5, 6, 0, 4],
+    }
+    d = {(k, t): float(bedarf[k][t - 1]) for k in produkte for t in perioden}
+
+    h = {1: 1.0, 2: 1.5, 3: 0.8, 4: 2.0, 5: 1.2, 6: 1.0}
+    s = {1: 10.0, 2: 12.0, 3: 8.0, 4: 15.0, 5: 11.0, 6: 13.0}
+    tb = {1: 1.0, 2: 1.2, 3: 0.8, 4: 1.5, 5: 1.0, 6: 1.3}
+    b = {t: 30.0 for t in perioden}
+
+    e_p = {1: 1.0, 2: 1.2, 3: 0.9, 4: 2.0, 5: 1.8, 6: 2.2}
+    e_l = {1: 0.05, 2: 0.08, 3: 0.05, 4: 0.10, 5: 0.08, 6: 0.10}
+    e_var = 0.3
+    e_on, e_sb, e_aus, e_an = 5.0, 2.0, 0.0, 3.0
+
+    A_werte = [22, 20, 18, 16, 14, 12, 10, 8]   # fallende Gratiszuteilung (Verknappung)
+    A = {t: float(A_werte[t - 1]) for t in perioden}
+    pi_B, pi_S = 3.0, 2.0
     J_0 = 10.0
     y_0 = {k: 0.0 for k in produkte}
 

@@ -17,6 +17,7 @@ from gurobipy import GRB
 
 from instanzen import (
     basis_instanz_k2_t4,
+    grosse_instanz_k6_t8,
     standby_instanz,
     aus_instanz,
     ruesten_im_aus_instanz,
@@ -47,6 +48,35 @@ def test_baut_und_loest():
     assert modell.Status == GRB.OPTIMAL, f"Status {modell.Status}, erwartet OPTIMAL"
     assert modell.SolCount >= 1
     return modell.ObjVal
+
+
+# ---------------------------------------------------------------------------
+# Test 1b: Grosse Instanz (K=6, T=8) baut, loest optimal und uebt alle Mechanismen
+# ---------------------------------------------------------------------------
+def test_grosse_instanz_k6_t8():
+    daten = grosse_instanz_k6_t8()
+    modell = _loese_still(build_model(daten))
+    assert modell.Status == GRB.OPTIMAL, f"Status {modell.Status}, erwartet OPTIMAL"
+
+    perioden = list(daten.perioden())
+    summe_aus = sum(_val(modell, f"z_aus[{t}]") for t in perioden)
+    summe_u = sum(_val(modell, f"u[{t}]") for t in perioden)
+    summe_B = sum(_val(modell, f"B[{t}]") for t in perioden)
+    summe_S = sum(_val(modell, f"S[{t}]") for t in perioden)
+    # familienuebergreifende Ruestwechsel (A={1,2,3}, B={4,5,6}) muessen auftreten
+    cross = sum(
+        _val(modell, f"chi[{i},{k},{t}]")
+        for i in daten.produkte() for k in daten.produkte()
+        for t in perioden
+        if i != k and (i <= 3) != (k <= 3)
+    )
+
+    # Die Instanz ist so kalibriert, dass das Vollmodell folgende Mechanismen nutzt:
+    assert summe_aus >= 1.0 - 1e-6, "Abschalten (Aus) wird nicht genutzt"
+    assert summe_u >= 1.0 - 1e-6, "kein Anschaltvorgang (Wiederanlauf)"
+    assert summe_B > 1e-6, "kein Zertifikat-Zukauf (Netto-Kaeufer erwartet)"
+    assert cross >= 1.0 - 1e-6, "kein familienuebergreifender Ruestwechsel"
+    return modell.ObjVal, summe_aus, summe_u, summe_B, summe_S
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +150,11 @@ if __name__ == "__main__":
     print("== Test 1: Bau & Loesung (K=2, T=4) ==")
     z1 = test_baut_und_loest()
     print(f"   OK  -> Zielwert Z = {z1:.4f}\n")
+
+    print("== Test 1b: Grosse Instanz (K=6, T=8), alle Mechanismen ==")
+    z1b, s_aus, s_u, s_B, s_S = test_grosse_instanz_k6_t8()
+    print(f"   OK  -> Z = {z1b:.2f}; Aus-Perioden={s_aus:.0f}, Anschalt={s_u:.0f}, "
+          f"Zukauf={s_B:.1f}, Verkauf={s_S:.1f}\n")
 
     print("== Test 2: Reduktionstest (== reines PLSP-SD) ==")
     z_red, z_basis = test_reduktion_entspricht_basis()
