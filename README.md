@@ -15,7 +15,9 @@ keine Restriktion hinzugefügt, keine weggelassen, keine Notation verändert.
 | `instanzen.py` | Konkrete Probleminstanzen (Daten) für Tests/Validierung |
 | `modell.py` | **Modelllogik**: `build_model(daten, reduktion_basismodell=False) -> gp.Model` |
 | `plsp_sd_basis.py` | Reines PLSP-SD (nur (1)–(8)) als Referenz für den Reduktionstest |
-| `loesung.py` | Lösung & Auswertung (Optimieren, Solution-Auslese, Anzeige) |
+| `loesung.py` | Lösung & Auswertung (Optimieren, Solution-Auslese, Textanzeige) |
+| `visualisierung.py` | Grafische Auswertung (5-Panel-Übersicht mit matplotlib) |
+| `demo.py` | Einstiegspunkt: löst Instanzen, druckt Tabelle, speichert Grafiken |
 | `test_modell.py` | Verifikation: Bau/Lösung, Reduktionstest, Verhaltenstests 3a–3c |
 
 Im Modellcode sind **keine Zahlenwerte hartkodiert**; die Big-M-Werte
@@ -35,6 +37,24 @@ modell = build_model(daten)                 # Vollmodell PLSP-SD-E
 loese(modell, ausgabe=False)
 zeige_loesung(modell, daten)
 modell.write("plsp_sd_e.lp")                # optionaler .lp-Export
+```
+
+## Grafische Auswertung
+
+`visualisierung.visualisiere(modell, daten, titel, dateipfad)` erzeugt eine
+zusammenhängende Abbildung mit fünf Panels:
+
+1. **Produktionsplan** – wer wird wann in welcher Menge produziert (`x_{kt}`),
+2. **Maschinenzustand** je Periode (An / Standby / Aus),
+3. **Rüstzustand & Rüstwechsel** – gerüstetes Produkt (`ω_{kt}`) mit Pfeilen für `i→k`,
+4. **Emissionszusammensetzung** – Aufschlüsselung von `E_t` nach Quelle (12),
+5. **Kostenaufschlüsselung** – Wasserfall der Zielfunktion (1) inkl. Verkaufserlös.
+
+Schnellstart (erzeugt PNG-Übersichten für alle Beispielinstanzen):
+
+```bash
+pip install matplotlib
+python3 demo.py
 ```
 
 ## Spezifikations-Abgleich (1)–(15)

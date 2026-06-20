@@ -1,2 +1,4 @@
-# Laufzeitabhaengigkeit des PLSP-SD-E-Modells
+# Laufzeitabhaengigkeiten des PLSP-SD-E-Modells
 gurobipy>=11.0
+# nur fuer die grafische Auswertung (visualisierung.py / demo.py):
+matplotlib>=3.7

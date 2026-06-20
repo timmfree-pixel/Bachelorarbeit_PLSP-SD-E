@@ -4,3 +4,5 @@ __pycache__/
 *.log
 gurobi.log
 .venv/
+# generierte Grafiken aus demo.py (reproduzierbar)
+uebersicht_*.png
