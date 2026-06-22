@@ -552,6 +552,67 @@ def test_aus() -> Instanz:
     return _trade_off_basis(T=4, bedarf={1: 5, 2: 0, 3: 0, 4: 5})
 
 
+def ruesten_im_aus_forced() -> Instanz:
+    """Erzwingt einen Ruestwechsel WAEHREND einer Aus-Periode ueber die Kapazitaet.
+
+    K=2, T=4, Startruestung omega_{1,0}=1 (i_0=1), z^{aus}_0=0 (durch (15) fest).
+    Bedarf: d_1=[5,0,0,0], d_2=[0,0,0,5]. Die Maschine startet auf Produkt 1,
+    produziert es in t=1 und muss bis t=4 auf Produkt 2 umgeruestet sein -> genau ein
+    Ruestwechsel 1->2.
+
+    Kapazitaeten C_t (= Feld b) aus den ECHTEN Parametern kalibriert, sodass der
+    Wechsel weder in t=1 noch in t=4 passt und damit in eine Leerlaufperiode t in {2,3}
+    gezwungen wird (die im Optimum Aus sind: e^{aus}=0 < e^{sb}, und zwei Leerlaeufe
+    machen den einmaligen Wiederanlauf e^{an}=3 billiger als 2*e^{sb}=4):
+      a_k = tb_k = 1.0 (Produktionszeit/Einheit),  tr_{12}=tr_{21}=1.0,  tau_an = 2.0
+      C_1 = tb_1*5          = 5.0  (exakt Produktion P1; kein Platz fuer tr=1)
+      C_4 = tb_2*5 + tau_an = 7.0  (exakt Produktion P2 + Anlaufzeit; kein Platz fuer tr=1)
+      C_2 = C_3 = 100.0            (grosszuegig; Platz fuer den Wechsel)
+    Der Block in t=4 traegt nur, weil der Wiederanlauf u_4=1 ist (Maschine war Aus):
+    tb_2*5 + tau_an*1 = 7 = C_4, ein zusaetzliches tr=1 wuerde 8 > 7 verletzen.
+
+    Erwartung: ex. t in {2,3} mit chi_{1,2,t} = 1 UND z^{aus}_t = 1.
+
+    Hinweise: Setup-Emissionen (e_fix, e_var) = 0 -> der Wechsel ist emissions- und
+    timing-neutral (nur die Kapazitaet erzwingt seine Lage). Fuer Produktionskosten
+    c^p existiert kein Feld (timing-neutral, entfaellt).
+    """
+    K, T, i_0 = 2, 4, 1
+    produkte = range(1, K + 1)
+    perioden = range(1, T + 1)
+
+    tb = {1: 1.0, 2: 1.0}                # a_k: Produktionszeit je Einheit
+    tr = _voll_tr(K, wert_offdiag=1.0)   # tr_{12}=tr_{21}=1.0, Diagonale 0
+    tau_an = 2.0                         # Anlaufzeit (Kapazitaetsverbrauch je u_t)
+
+    d = {(1, 1): 5.0, (1, 2): 0.0, (1, 3): 0.0, (1, 4): 0.0,
+         (2, 1): 0.0, (2, 2): 0.0, (2, 3): 0.0, (2, 4): 5.0}
+
+    # Kapazitaeten aus den echten Parametern berechnet (kein Platz fuer tr in t=1,4):
+    C_1 = tb[1] * 5.0                    # = 5.0
+    C_4 = tb[2] * 5.0 + tau_an           # = 7.0
+    C_offen = 100.0                      # t=2,3 grosszuegig
+    b = {1: C_1, 2: C_offen, 3: C_offen, 4: C_4}
+
+    h = {1: 1000.0, 2: 1000.0}           # Lagerkosten hoch -> keine Vorproduktion
+    s = {1: 1.0, 2: 1.0}                 # Ruestkosten (timing-neutral)
+
+    e_p = {1: 1.0, 2: 1.0}
+    e_fix = _voll_efix(K, wert_offdiag=0.0)  # keine fixe Ruestemission
+    e_var = 0.0
+    e_l = {1: 0.1, 2: 0.1}               # e^h Lageremission
+    e_on, e_sb, e_aus, e_an = 4.0, 2.0, 0.0, 3.0
+    A = {t: 50.0 for t in perioden}      # reichlich -> Netto-Verkaeufer
+    pi_B, pi_S = 12.0, 10.0              # pi^B >= pi^S > 0
+    J_0 = 0.0
+    y_0 = {k: 0.0 for k in produkte}
+
+    return Instanz(K=K, T=T, i_0=i_0, d=d, h=h, s=s, tb=tb, tr=tr, b=b,
+                   e_p=e_p, e_fix=e_fix, e_var=e_var, e_l=e_l,
+                   e_on=e_on, e_sb=e_sb, e_aus=e_aus, e_an=e_an,
+                   A=A, pi_B=pi_B, pi_S=pi_S, J_0=J_0, y_0=y_0, tau_an=tau_an)
+
+
 # =============================================================================
 # 3) REINES PLSP-SD-BASISMODELL  (aus plsp_sd_basis.py)
 # =============================================================================
@@ -1258,6 +1319,7 @@ ALLE_INSTANZEN = [
     ("ruesten_im_aus_instanz", ruesten_im_aus_instanz),
     ("test_standby", test_standby),
     ("test_aus", test_aus),
+    ("ruesten_im_aus_forced", ruesten_im_aus_forced),
 ]
 
 
@@ -1409,6 +1471,97 @@ def run_reduktionstests():
 
 
 # =============================================================================
+# RUESTWECHSEL WAEHREND AUS-PERIODE: Nachweis (AUFGABE 1-3)
+# =============================================================================
+
+def pruefe_wechsel_in_aus(model, daten, name=""):
+    """Check: gibt es eine Periode t mit z_aus_t=1, in der ein chi_{i,k,t}>0 feuert?
+
+    Gibt Periode(n) und i->k aus. Rueckgabe True (OK), wenn mindestens eine gefunden,
+    sonst False (FEHLT).
+    """
+    if model.Status != GRB.OPTIMAL:
+        print(f"[FEHLT] {name}: Modell nicht optimal (Status={model.Status}).")
+        return False
+    treffer = []
+    for t in daten.perioden():
+        if _mval(model, f"z_aus[{t}]") > 0.5:
+            for (i, k) in daten.wechsel_paare():
+                if _mval(model, f"chi[{i},{k},{t}]") > 0.5:
+                    treffer.append((t, f"{i}->{k}"))
+    if treffer:
+        liste = ", ".join(f"t={t}: {wk}" for t, wk in treffer)
+        print(f"[OK]    {name}: Ruestwechsel WAEHREND Aus-Periode (z_aus=1) -> {liste}")
+        return True
+    print(f"[FEHLT] {name}: kein chi>0 in einer Aus-Periode (z_aus=1) gefunden.")
+    return False
+
+
+def demo_ruesten_im_aus():
+    """AUFGABE 1-3: Nachweis, dass ein Ruestwechsel waehrend z_aus=1 zulaessig ist.
+
+    Beide Modelle bleiben UNVERAENDERT. Grundlage: chi ist nicht an z gekoppelt
+    (nur (10) bindet die Produktion x an z_an; (6)/(7) binden chi an omega), und
+    tr*chi steht auf der Verbrauchsseite der Kapazitaet (3) -> ein Wechsel laesst sich
+    per Kapazitaet in eine Aus-Periode zwingen.
+    """
+    # ---- AUFGABE 1: bestehende Instanz im Vollmodell --------------------------
+    print("#" * 78)
+    print("# AUFGABE 1: ruesten_im_aus_instanz im VOLLMODELL (aktive Emissionen)")
+    print("#" * 78)
+    d1 = ruesten_im_aus_instanz()
+    m1 = build_model(d1)                  # reduktion_basismodell=False
+    m1.Params.OutputFlag = 0
+    m1.optimize()
+    if m1.Status == GRB.OPTIMAL:
+        report_loesung(m1, d1)
+        pruefe_wechsel_in_aus(m1, d1, "ruesten_im_aus_instanz")
+    else:
+        print(f"Kein optimaler Status (Status={m1.Status}).")
+
+    # ---- AUFGABE 2: Kapazitaetsstruktur offenlegen (nur Bericht) --------------
+    print()
+    print("#" * 78)
+    print("# AUFGABE 2: Kapazitaetsstruktur (nur Bericht, nichts geaendert)")
+    print("#" * 78)
+    print("Frage: Verbraucht ein Ruestwechsel Kapazitaet (steht tr*chi auf der "
+          "Verbrauchsseite von (3))?")
+    print("Antwort: JA. Codestelle modell.py, Restriktion (3) 'c3_kapazitaet':")
+    print("    Sum_k tb_k*x_{kt} + Sum_{i,k} tr_{ik}*chi_{ikt} + tau_an*u_t <= b_t")
+    print("Der Term Sum_{i,k} tr_{ik}*chi_{ikt} steht links (Verbrauchsseite). Zudem ist")
+    print("chi NICHT an z gekoppelt: (10) 'c10_an_bei_produktion' bindet nur x an z_an")
+    print("('keine Kopplung von chi an z'). -> Erzwingung ueber Kapazitaet moeglich;")
+    print("AUFGABE 3 wird ausgefuehrt.")
+
+    # ---- AUFGABE 3: Erzwingungs-Instanz ---------------------------------------
+    print()
+    print("#" * 78)
+    print("# AUFGABE 3: ruesten_im_aus_forced (Wechsel in Aus-Periode erzwungen)")
+    print("#" * 78)
+    d3 = ruesten_im_aus_forced()
+    print("ERWARTUNG (dokumentiert VOR dem Loesen):")
+    print(f"  Berechnete Kapazitaeten aus echten Parametern (tb_1={d3.tb[1]:g}, "
+          f"tb_2={d3.tb[2]:g}, tr_12={d3.tr[1, 2]:g}, tau_an={d3.tau_an:g}):")
+    print(f"    C_1={d3.b[1]:g} (=tb_1*5, exakt P1, kein Platz fuer tr)")
+    print(f"    C_2={d3.b[2]:g}, C_3={d3.b[3]:g} (grosszuegig, Platz fuer den Wechsel)")
+    print(f"    C_4={d3.b[4]:g} (=tb_2*5 + tau_an, exakt P2+Anlauf, kein Platz fuer tr)")
+    print("  => Wechsel 1->2 muss in t in {2,3} liegen; diese sind im Optimum Aus.")
+    print("  => Erwartet: chi_{1,2,t}=1 fuer ein t in {2,3} bei gleichzeitig z_aus_t=1.")
+    print()
+    m3 = build_model(d3)
+    m3.Params.OutputFlag = 0
+    m3.optimize()
+    if m3.Status == GRB.OPTIMAL:
+        report_loesung(m3, d3)
+        print("ERGEBNIS vs. Erwartung:")
+        pruefe_wechsel_in_aus(m3, d3, "ruesten_im_aus_forced")
+    elif m3.Status in (GRB.INFEASIBLE, GRB.INF_OR_UNBD):
+        print("INFEASIBLE - Kapazitaeten zu knapp gewaehlt (Erwartung verfehlt).")
+    else:
+        print(f"Kein optimaler Status (Status={m3.Status}).")
+
+
+# =============================================================================
 # 6) BEISPIELBLOCK  (in Colab als letzte Zelle ausfuehren)
 # =============================================================================
 # Laedt eine kleine Toy-Instanz, baut/loest das Modell, prueft den Status und ruft
@@ -1442,3 +1595,7 @@ if __name__ == "__main__":
     # --- 5) Reduktionstest: extended(reduktion) == Basismodell (alle Instanzen) -
     print()
     run_reduktionstests()
+
+    # --- 6) Ruestwechsel waehrend Aus-Periode: Nachweis (AUFGABE 1-3) ----------
+    print()
+    demo_ruesten_im_aus()
