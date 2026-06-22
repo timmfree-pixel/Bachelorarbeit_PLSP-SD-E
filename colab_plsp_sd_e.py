@@ -1245,6 +1245,170 @@ def demo_test_standby_aus():
 
 
 # =============================================================================
+# REDUKTIONSTEST: erweitertes Modell (reduktion_basismodell=True) == Basismodell
+# (AUFGABE 1: Schalter pruefen | 2: Aequivalenztest | 3: alle Instanzen | 4: Anker)
+# =============================================================================
+
+# Registry ALLER Instanzen aus dem Instanzen-Abschnitt (fuer den Lauf ueber alles).
+ALLE_INSTANZEN = [
+    ("basis_instanz_k2_t4", basis_instanz_k2_t4),
+    ("grosse_instanz_k6_t8", grosse_instanz_k6_t8),
+    ("standby_instanz", standby_instanz),
+    ("aus_instanz", aus_instanz),
+    ("ruesten_im_aus_instanz", ruesten_im_aus_instanz),
+    ("test_standby", test_standby),
+    ("test_aus", test_aus),
+]
+
+
+def _mval(model, name):
+    """Variablenwert per Name (0.0, falls Variable nicht existiert)."""
+    v = model.getVarByName(name)
+    return v.X if v is not None else 0.0
+
+
+def _kostenanteile(model, daten):
+    """Ruest- und Lagerkosten aus den Modellvariablen (gleiche Namen in beiden Modellen).
+
+    Ruestkosten = Sum s_k * chi_{ikt};  Lagerkosten = Sum h_k * y_{kt} (t=1..T).
+    h_k und s_k werden vom Reduktionsschalter NICHT genullt (nur Emissionen/Preise),
+    daher fuer beide Modelle korrekt vergleichbar.
+    """
+    ruest = sum(daten.s[k] * _mval(model, f"chi[{i},{k},{t}]")
+                for (i, k) in daten.wechsel_paare() for t in daten.perioden())
+    lager = sum(daten.h[k] * _mval(model, f"y[{k},{t}]")
+                for k in daten.produkte() for t in daten.perioden())
+    return ruest, lager
+
+
+def pruefe_reduktionsschalter(instanz, name=""):
+    """AUFGABE 1: prueft empirisch, was reduktion_basismodell=True bewirkt (OK/FEHLT).
+
+    (a) alle Emissionsparameter 0 -> E_t = 0 in jeder Periode.
+    (b) pi^B = pi^S = 0 -> Zertifikatsterm faellt aus der Zielfunktion (Z = Lager+Ruest),
+        J_t >= 0 bindet nicht kostenwirksam.
+    (c) z_an_t = 1 (z_sb=z_aus=0, u=0, tau_an*u_t = 0). HINWEIS: der Schalter FIXIERT
+        z_an NICHT - das Resultat u_t=0 wird vom Solver als zielfunktionsneutrales
+        Optimum erreicht (hier gezeigt), weshalb die Aequivalenz dennoch haelt.
+    """
+    m = build_model(instanz, reduktion_basismodell=True)
+    m.Params.OutputFlag = 0
+    m.optimize()
+    perioden = list(instanz.perioden())
+    eps = 1e-7
+
+    print(f"AUFGABE 1 - Reduktionsschalter auf '{name}' (Status "
+          f"{'OPTIMAL' if m.Status == GRB.OPTIMAL else m.Status}):")
+
+    # (a) E_t = 0 in jeder Periode
+    E = [_mval(m, f"E[{t}]") for t in perioden]
+    a_ok = all(abs(e) < eps for e in E)
+    print(f"  [{'OK   ' if a_ok else 'FEHLT'}] (a) Emissionen neutralisiert: "
+          f"max_t |E_t| = {max((abs(e) for e in E), default=0.0):.2e}")
+
+    # (b) Zertifikatsterm aus Z: Z == Lager + Ruest (kein Zertifikatsanteil)
+    ruest, lager = _kostenanteile(m, instanz)
+    z_ohne_cert = m.ObjVal if m.Status == GRB.OPTIMAL else float("nan")
+    b_ok = (m.Status == GRB.OPTIMAL and abs(z_ohne_cert - (ruest + lager)) < 1e-6)
+    print(f"  [{'OK   ' if b_ok else 'FEHLT'}] (b) Zertifikatsterm faellt aus Z: "
+          f"Z={z_ohne_cert:.4f} == Lager+Ruest={ruest + lager:.4f}")
+
+    # (c) z_an_t = 1 / u_t = 0 -> tau_an*u_t = 0 (Kapazitaet wie Basis)
+    z_an = [_mval(m, f"z_an[{t}]") for t in perioden]
+    u = [_mval(m, f"u[{t}]") for t in perioden]
+    c_loesung_ok = all(za > 0.5 for za in z_an) and all(abs(ui) < eps for ui in u)
+    print("  [FEHLT] (c) z_an_t=1 wird vom Schalter NICHT erzwungen (struktureller Befund). "
+          f"\n          -> In der Loesung dennoch u_t=0 ({'ja' if c_loesung_ok else 'NEIN'}), "
+          f"tau_an*u_t=0, Kapazitaet == Basis. Aequivalenz bleibt gewahrt.\n"
+          "          -> Optionale Loesung (nicht noetig, Modell bleibt unveraendert): im "
+          "Reduktionsmodus z_an_t.lb=1 setzen.")
+    return {"a": a_ok, "b": b_ok, "c_strukturell_fixiert": False, "c_loesung_ut0": c_loesung_ok}
+
+
+def reduktionstest(instanz, name=""):
+    """AUFGABE 2: Aequivalenz Basismodell (plsp_sd_basis) vs. erweitertes Modell
+    im Reduktionsmodus auf DERSELBEN Instanz.
+
+    Beide Modelle erhalten identische Anfangsbedingungen, da beide daten.i_0 fuer
+    omega_{i0,0}=1 nutzen (verifiziert). Bestanden, wenn beide OPTIMAL und
+    |Z_basis - Z_ext| < 1e-4. Gibt Zeile + Kostenaufschluesselung aus und liefert dict.
+    """
+    mb = build_plsp_sd_basis(instanz)
+    mb.Params.OutputFlag = 0
+    mb.optimize()
+    me = build_model(instanz, reduktion_basismodell=True)
+    me.Params.OutputFlag = 0
+    me.optimize()
+
+    status_ok = (mb.Status == GRB.OPTIMAL and me.Status == GRB.OPTIMAL)
+    zb = mb.ObjVal if mb.Status == GRB.OPTIMAL else float("nan")
+    ze = me.ObjVal if me.Status == GRB.OPTIMAL else float("nan")
+    diff = abs(zb - ze) if status_ok else float("nan")
+    bestanden = bool(status_ok and diff < 1e-4)
+
+    rb, lb = _kostenanteile(mb, instanz)
+    re_, le = _kostenanteile(me, instanz)
+
+    # Anfangsbedingung verifizieren: gleiche Startruestung omega_{i0,0}=1 in beiden
+    i0 = instanz.i_0
+    start_gleich = (abs(_mval(mb, f"omega[{i0},0]") - 1.0) < 1e-6
+                    and abs(_mval(me, f"omega[{i0},0]") - 1.0) < 1e-6)
+
+    status_txt = "BESTANDEN" if bestanden else "FEHLER"
+    if not status_ok:
+        status_txt += f" (Status basis={mb.Status}, ext={me.Status})"
+    print(f"{name:24s} | Z_basis={zb:9.4f} | Z_ext={ze:9.4f} | "
+          f"diff={diff:.2e} | {status_txt}")
+    print(f"     Kosten Basis: Ruest={rb:8.4f}  Lager={lb:8.4f}    "
+          f"Ext: Ruest={re_:8.4f}  Lager={le:8.4f}    "
+          f"Startruestung gleich: {'ja' if start_gleich else 'NEIN'}")
+
+    return {
+        "Instanz": name, "Z_basis": zb, "Z_ext": ze, "Differenz": diff,
+        "Status": "BESTANDEN" if bestanden else "FEHLER",
+        "Ruest_basis": rb, "Lager_basis": lb, "Ruest_ext": re_, "Lager_ext": le,
+        "Start_gleich": start_gleich, "bestanden": bestanden,
+    }
+
+
+def run_reduktionstests():
+    """AUFGABE 1-4 in einem Lauf: Schalter pruefen, Aequivalenztest ueber ALLE
+    Instanzen, Zusammenfassung 'X von N', optionaler externer Kaczmarczyk-Anker."""
+    print("=" * 78)
+    print("AUFGABE 1: Reduktionsschalter verifizieren (repraesentativ, tau_an>0)")
+    print("=" * 78)
+    pruefe_reduktionsschalter(test_aus(), "test_aus")
+
+    print()
+    print("=" * 78)
+    print("AUFGABE 2+3: Aequivalenztest extended-reduktion vs. Basismodell (alle Instanzen)")
+    print("=" * 78)
+    ergebnisse = [reduktionstest(fac(), name) for name, fac in ALLE_INSTANZEN]
+
+    # Konsolidierte Uebersicht als DataFrame (Colab: display, alle Spalten/Zeilen)
+    df = pd.DataFrame(ergebnisse)[
+        ["Instanz", "Z_basis", "Z_ext", "Differenz", "Status",
+         "Ruest_basis", "Lager_basis", "Ruest_ext", "Lager_ext", "Start_gleich"]
+    ]
+    print()
+    display(df)
+
+    bestanden = sum(1 for e in ergebnisse if e["bestanden"])
+    print(f"\n{bestanden} von {len(ergebnisse)} Instanzen bestanden.")
+
+    print()
+    print("=" * 78)
+    print("AUFGABE 4: Externer Anker (Kaczmarczyk)")
+    print("=" * 78)
+    if any("kaczmarczyk" in name.lower() for name, _ in ALLE_INSTANZEN):
+        print("Kaczmarczyk-Benchmark gefunden - bitte Z_ext gegen publizierten Wert pruefen.")
+    else:
+        print("Externer Benchmark (Kaczmarczyk) noch nicht hinterlegt - Test validiert "
+              "aktuell nur die interne Reduktionsaequivalenz.")
+    return df
+
+
+# =============================================================================
 # 6) BEISPIELBLOCK  (in Colab als letzte Zelle ausfuehren)
 # =============================================================================
 # Laedt eine kleine Toy-Instanz, baut/loest das Modell, prueft den Status und ruft
@@ -1274,3 +1438,7 @@ if __name__ == "__main__":
     # --- 4) Standby/Aus-Trade-off-Nachweis (beide neuen Instanzen) -------------
     print()
     demo_test_standby_aus()
+
+    # --- 5) Reduktionstest: extended(reduktion) == Basismodell (alle Instanzen) -
+    print()
+    run_reduktionstests()
