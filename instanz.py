@@ -47,6 +47,10 @@ class Instanz:
     tb  : tb_k    Produktionszeit (Belegung) je Einheit von k   (Dict[k] -> float, > 0)
     tr  : tr_{ik} Sequenzabhängige Rüstzeit Wechsel i -> k       (Dict[(i, k)] -> float)
     b   : b_t     Verfügbare Kapazität (Zeit) der Mikroperiode t (Dict[t] -> float)
+    tau_an: tau^{an} Anlaufzeit (produktunabhängig) je Anschaltvorgang u_t. Belegt
+                  Kapazität in (3): Verbrauchsseite + tau^{an} u_t. Default 0.0
+                  (rückwärtskompatibel: ohne gesetzte Anlaufzeit bleibt (3)
+                  unverändert; im Reduktionsmodus ist u_t = 0, der Term entfällt).
 
     Erweiterungsparameter (Emissionen / Zertifikatshandel)
     ------------------------------------------------------
@@ -95,6 +99,14 @@ class Instanz:
     pi_S: float
     J_0: float
     y_0: Dict[int, float]
+
+    # --- Anlaufzeit-Erweiterung (Kapazitätsverbrauch beim Anschalten) -----------
+    # tau^{an}: produktunabhängige Anlaufzeit je Anschaltvorgang u_t. Wird in der
+    # Kapazitätsrestriktion (3) auf der Verbrauchsseite als + tau_an * u_t addiert.
+    # Default 0.0 -> rückwärtskompatibel (Term inert, (3) unverändert), per Instanz
+    # aktivierbar. Muss als einziges Feld einen Default tragen (Dataclass-Regel:
+    # Felder mit Default am Ende); bestehende Instanzen konstruieren per Keyword.
+    tau_an: float = 0.0
 
     # --- abgeleitete Hilfsmengen (1-basiert) ------------------------------------
     def produkte(self) -> range:

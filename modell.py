@@ -105,6 +105,13 @@ def build_model(daten: Instanz, reduktion_basismodell: bool = False) -> gp.Model
         e_on, e_sb, e_aus, e_an = daten.e_on, daten.e_sb, daten.e_aus, daten.e_an
         pi_B, pi_S = daten.pi_B, daten.pi_S
 
+    # Anlaufzeit tau^{an} (produktunabhängig): Kapazitätsverbrauch je Anschalt-
+    # vorgang u_t in (3). Bewusst NICHT im Reduktionsmodus genullt (Zeit-/Kapazitäts-
+    # größe, keine Emissions-/Preisgröße); im Reduktionsmodus ist u_t = 0 (z^{an}_t = 1
+    # ist dort zielfunktionsneutral wählbar), sodass der Term + tau^{an} u_t automatisch
+    # entfällt und der Reduktionsvergleich gegen das reine PLSP-SD exakt aufgeht.
+    tau_an = daten.tau_an
+
     # -------------------------------------------------------------------------
     # 1) Big-M aus den Daten berechnen (keine Zahlenwerte hartkodiert, A4)
     #    M_{kt} = min( b_t / tb_k , Sum_{tau >= t} d_{k,tau} )
@@ -176,12 +183,16 @@ def build_model(daten: Instanz, reduktion_basismodell: bool = False) -> gp.Model
         name="c2_lagerbilanz",
     )
 
-    # (3) Kapazität der Mikroperiode (Produktion + sequenzabhängiges Rüsten):
-    #     Sum_k tb_k x_{kt} + Sum_i Sum_k tr_{ik} chi_{ikt} <= b_t
-    #     (kein Anschaltterm: Anschalten verbraucht keine Kapazität)
+    # (3) Kapazität der Mikroperiode (Produktion + sequenzabhängiges Rüsten + Anlaufzeit):
+    #     Sum_k tb_k x_{kt} + Sum_i Sum_k tr_{ik} chi_{ikt} + tau^{an} u_t <= b_t
+    #     Erweiterung um die Anlaufzeit: jeder Anschaltvorgang u_t belegt zusätzlich
+    #     tau^{an} Kapazitätszeit (produktunabhängig) auf der Verbrauchsseite. Im
+    #     Reduktionsmodus ist u_t = 0 (z^{an}_t = 1 wählbar), sodass der Term entfällt
+    #     und (3) exakt das reine PLSP-SD reproduziert.
     modell.addConstrs(
         (gp.quicksum(daten.tb[k] * x_kt[k, t] for k in produkte)
          + gp.quicksum(daten.tr[i, k] * chi_ikt[i, k, t] for (i, k) in wechsel)
+         + tau_an * u_t[t]
          <= daten.b[t]
          for t in perioden),
         name="c3_kapazitaet",
