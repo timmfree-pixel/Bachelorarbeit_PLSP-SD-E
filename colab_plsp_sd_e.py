@@ -478,6 +478,80 @@ def ruesten_im_aus_instanz(D: float = 1.0) -> Instanz:
                    A=A, pi_B=pi_B, pi_S=pi_S, J_0=J_0, y_0=y_0)
 
 
+# ---------------------------------------------------------------------------
+# Standby/Aus-Trade-off-Nachweis (gemeinsame Parameter, nur T und Bedarf variieren)
+# ---------------------------------------------------------------------------
+# Beide Instanzen unten teilen exakt dieselben Parameter und unterscheiden sich nur
+# in der Anzahl aufeinanderfolgender Leerlaufperioden zwischen zwei Produktionen:
+#   1 Leerlauf  -> Standby billiger (e^{sb}=2 < e^{an}=3 fuer Abschalten+Wiederanlauf)
+#   2 Leerlauf  -> Abschalten billiger (2*e^{sb}=4 > e^{an}=3)
+#
+# Symbol -> tatsaechliches Feld in der Datenklasse (nichts geraten):
+#   e^p->e_p, e^on->e_on, e^sb->e_sb, e^aus->e_aus, e^an->e_an,
+#   e^h (Lageremission)->e_l, c^h (Lagerkosten)->h, tau_an->tau_an,
+#   C_t->b, A_t->A, pi^S->pi_S, pi^B->pi_B, Startruestzustand omega_{1,0}=1 -> i_0=1
+#   (erzwungen durch Restriktion (8)); z^{aus}_0=0 ist durch (15) fest (kein Feld).
+#   Setup ohne Wirkung (K=1, wechsel_paare leer): s=0, tr=0, e_fix=0, e_var=0.
+#
+# GEMELDET (nicht still ergaenzt): Fuer die PRODUKTIONSKOSTEN c^p existiert KEIN Feld
+# - die Zielfunktion (1) kennt nur Lager-, Ruest- und Zertifikatskosten. c^p ist hier
+# trade-off-neutral (Gesamtproduktion = Gesamtbedarf, in jeder zulaessigen Loesung
+# gleich) und daher weggelassen. tb_k (Produktionszeit) ist vom Task nicht vorgegeben;
+# konventionsgemaess wie in den uebrigen Instanzen tb_1=1.0.
+
+def _trade_off_basis(T: int, bedarf: dict) -> Instanz:
+    """Gemeinsamer Bauplan beider Trade-off-Instanzen (K=1, identische Parameter)."""
+    K, i_0 = 1, 1
+    produkte = range(1, K + 1)
+    perioden = range(1, T + 1)
+
+    d = {(1, t): float(bedarf[t]) for t in perioden}
+    h = {1: 100.0}                     # c^h hoch -> Vorproduktion gesperrt
+    s = {1: 0.0}                       # kein Ruestwechsel (K=1)
+    tb = {1: 1.0}                      # Produktionszeit/Einheit (Konvention; Task: n/a)
+    tr = _voll_tr(K)                   # {(1,1): 0.0}, keine i!=k Paare
+    b = {t: 10.0 for t in perioden}    # C_t = 10 in jeder Periode
+
+    e_p = {1: 1.0}
+    e_fix = _voll_efix(K)              # {(1,1): 0.0}
+    e_var = 0.0
+    e_l = {1: 0.1}                     # e^h Lageremission je Einheit/Periode
+    e_on, e_sb, e_aus, e_an = 4.0, 2.0, 0.0, 3.0
+    A = {t: 50.0 for t in perioden}    # freie Allokation A_t
+    pi_B, pi_S = 12.0, 10.0            # pi^B >= pi^S
+    J_0 = 0.0
+    y_0 = {1: 0.0}
+    tau_an = 2.0                       # Anlaufzeit (Kapazitaetsverbrauch je u_t)
+
+    return Instanz(K=K, T=T, i_0=i_0, d=d, h=h, s=s, tb=tb, tr=tr, b=b,
+                   e_p=e_p, e_fix=e_fix, e_var=e_var, e_l=e_l,
+                   e_on=e_on, e_sb=e_sb, e_aus=e_aus, e_an=e_an,
+                   A=A, pi_B=pi_B, pi_S=pi_S, J_0=J_0, y_0=y_0, tau_an=tau_an)
+
+
+def test_standby() -> Instanz:
+    """Trade-off Teil 1 (K=1, T=3): EINE Leerlaufperiode -> STANDBY gewinnt.
+
+    Bedarf d_1 = [5, 0, 5]; der einzelne Leerlauf in t=2 wird per Standby ueberbrueckt,
+    da e^{sb}=2 guenstiger ist als ein Abschalten mit Wiederanlauf in t=3
+    (e^{an}=3, zusaetzlich Anlaufzeit tau_an=2 auf der Kapazitaet von t=3).
+    Erwartung: z^{sb}_2 = 1 (Standby), kein z^{aus}, Sum u_t = 0.
+    """
+    return _trade_off_basis(T=3, bedarf={1: 5, 2: 0, 3: 5})
+
+
+def test_aus() -> Instanz:
+    """Trade-off Teil 2 (K=1, T=4): ZWEI Leerlaufperioden -> ABSCHALTEN gewinnt.
+
+    Bedarf d_1 = [5, 0, 0, 5]; die zwei aufeinanderfolgenden Leerlaeufe (t=2,3) werden
+    per Abschalten ueberbrueckt, da 2*e^{sb}=4 teurer waere als ein einmaliger
+    Wiederanlauf e^{an}=3 zu t=4. Die Kapazitaet C_t=10 traegt den Anlaufzeit-Term
+    (tb_1*5 + tau_an*1 = 7 <= 10).
+    Erwartung: z^{aus}_2 = z^{aus}_3 = 1 (Aus), Wiederanlauf u_4 = 1.
+    """
+    return _trade_off_basis(T=4, bedarf={1: 5, 2: 0, 3: 0, 4: 5})
+
+
 # =============================================================================
 # 3) REINES PLSP-SD-BASISMODELL  (aus plsp_sd_basis.py)
 # =============================================================================
@@ -1139,6 +1213,37 @@ def solve_und_report(daten, reduktion_basismodell=False, ausgabe=False):
     return modell, None
 
 
+def demo_test_standby_aus():
+    """Loest beide Trade-off-Instanzen nacheinander und reportet jede vollstaendig.
+
+    Weist den Standby/Aus-Trade-off nach: eine einzelne Leerlaufperiode wird per
+    Standby ueberbrueckt (test_standby), zwei aufeinanderfolgende per Abschalten mit
+    Wiederanlauf (test_aus). Fuer jede Instanz: bauen, loesen, Status pruefen und
+    report_loesung (Periodentabelle, Kennzahlen, 7 Checks). Modell bleibt unveraendert.
+    """
+    faelle = [
+        ("test_standby", test_standby,
+         "EIN Leerlauf   -> Erwartung: STANDBY (z_sb=1 in der Leerlaufperiode)"),
+        ("test_aus", test_aus,
+         "ZWEI Leerlaeufe -> Erwartung: AUS (z_aus=1) mit Wiederanlauf u=1"),
+    ]
+    for name, factory, erwartung in faelle:
+        print("#" * 78)
+        print(f"# INSTANZ {name}:  {erwartung}")
+        print("#" * 78)
+        daten = factory()
+        modell = build_model(daten)          # bestehendes Modell UNVERAENDERT genutzt
+        modell.Params.OutputFlag = 0
+        modell.optimize()
+        if modell.Status == GRB.OPTIMAL:
+            report_loesung(modell, daten)
+        elif modell.Status in (GRB.INFEASIBLE, GRB.INF_OR_UNBD):
+            print(f"{name}: INFEASIBLE - keine zulaessige Loesung.")
+        else:
+            print(f"{name}: kein optimaler Status (Status={modell.Status}).")
+        print()
+
+
 # =============================================================================
 # 6) BEISPIELBLOCK  (in Colab als letzte Zelle ausfuehren)
 # =============================================================================
@@ -1165,3 +1270,7 @@ if __name__ == "__main__":
 
     # Alternative Einzeiler (baut + loest + reportet + Status-/Infeasibility-Handling):
     #   modell, df = solve_und_report(basis_instanz_k2_t4())
+
+    # --- 4) Standby/Aus-Trade-off-Nachweis (beide neuen Instanzen) -------------
+    print()
+    demo_test_standby_aus()
