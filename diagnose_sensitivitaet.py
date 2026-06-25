@@ -254,5 +254,184 @@ def _interpretation(ergebnisse):
             print("  Delta_E nicht bestimmbar (kein optimaler Lauf).")
 
 
+# =============================================================================
+# Konsistenz-Checks (repliziert aus report_loesung; report_loesung liegt in der
+# Colab-Konsolidierung, die wegen der !pip-Zeile nicht als Modul importierbar ist)
+# =============================================================================
+def _konsistenz_checks(m, inst):
+    """Die 7 Checks aus report_loesung; Rueckgabe (anzahl_ok, [(name, ok)])."""
+    P = list(inst.produkte())
+    Ts = list(inst.perioden())
+    W = inst.wechsel_paare()
+    eps = 1e-6
+
+    def v(n):
+        return _val(m, n)
+
+    res = []
+    # 1) z_an + z_sb + z_aus == 1
+    res.append(("(1) z_an+z_sb+z_aus==1", all(
+        abs(v(f"z_an[{t}]") + v(f"z_sb[{t}]") + v(f"z_aus[{t}]") - 1) < eps for t in Ts)))
+    # 2) x_{k,t} > 0 => z_an_t == 1
+    res.append(("(2) x>0 => z_an=1", all(
+        not (sum(v(f"x[{k},{t}]") for k in P) > eps) or v(f"z_an[{t}]") > 1 - eps for t in Ts)))
+    # 3) u_t >= z_aus_{t-1} - z_aus_t
+    res.append(("(3) u_t >= z_aus_{t-1}-z_aus_t", all(
+        v(f"u[{t}]") >= v(f"z_aus[{t-1}]") - v(f"z_aus[{t}]") - eps for t in Ts)))
+    # 4) omega aendert sich nur durch einen Ruestwechsel chi
+    ok4 = True
+    for t in Ts:
+        geaendert = any(abs(v(f"omega[{k},{t}]") - v(f"omega[{k},{t-1}]")) > eps for k in P)
+        chi_aktiv = sum(v(f"chi[{i},{k},{t}]") for (i, k) in W) > 0.5
+        if geaendert and not chi_aktiv:
+            ok4 = False
+    res.append(("(4) omega nur via chi", ok4))
+    # 5) kein Self-Loop chi_{k,k,t}
+    res.append(("(5) kein Self-Loop chi_kkt", all(
+        (m.getVarByName(f"chi[{k},{k},{t}]") is None
+         or abs(m.getVarByName(f"chi[{k},{k},{t}]").X) < eps) for k in P for t in Ts)))
+    # 6) Zertifikatebilanz
+    res.append(("(6) J_t == J_{t-1}+A+B-S-E", all(
+        abs(v(f"J[{t}]") - (v(f"J[{t-1}]") + inst.A[t] + v(f"B[{t}]") - v(f"S[{t}]") - v(f"E[{t}]"))) < 1e-4
+        for t in Ts)))
+    # 7) J_t >= 0
+    res.append(("(7) J_t >= 0", all(v(f"J[{t}]") >= -eps for t in Ts)))
+    return sum(1 for _, ok in res if ok), res
+
+
+# =============================================================================
+# AUFGABE 2 - E_baseline messen (Vollmodell-Optimum der ungestoerten Basis)
+# =============================================================================
+def e_baseline_messen(inst=None):
+    """Misst E_baseline am Vollmodell-Optimum der (ungestoerten) Basis und gibt es aus.
+
+    E ist ueber alpha/pi flach (verifiziert), daher ist das Vollmodell-Optimum eine
+    saubere, reproduzierbare Baseline. (A_t=1e6 ist UNGEEIGNET: der Zielwert wird dann
+    numerisch vom Zertifikatshandel dominiert und Emission/Kosten verschwinden im
+    Rundungsrauschen.)
+    """
+    inst = inst or ds.basis()
+    k = kennzahlen(inst, "basis")
+    E = k["E_total"]
+    print("=" * 100)
+    print("AUFGABE 2 - E_baseline (gemessen) und A_t-Neukalibrierung")
+    print("=" * 100)
+    if E is None:
+        print(f"Basis nicht optimal (Status={k['status']}).")
+        return None
+    a_t = ds.ALPHA_BASIS * E / inst.T
+    print(f"E_baseline_neu (Vollmodell-Optimum) = {E:.4f} t CO2e")
+    print(f"Modul-Konstante E_BASELINE_EST       = {ds.E_BASELINE_EST}  "
+          f"({'stimmt ueberein' if abs(E - ds.E_BASELINE_EST) < 0.01 else 'WEICHT AB -> Konstante anpassen!'})")
+    print(f"Neues A_t = alpha*E_baseline/T = {ds.ALPHA_BASIS}*{E:.2f}/{inst.T} = {a_t:.4f} je Periode "
+          f"(Summe {ds.ALPHA_BASIS * E:.3f}); J_0 = {inst.J_0}")
+    print(f"Kontrolle: basis().A[1] = {ds.basis().A[1]:.4f}")
+    return E
+
+
+# =============================================================================
+# AUFGABE 3 - Verifikation der neuen Basis
+# =============================================================================
+def verifiziere_basis():
+    """Loest die neue Basis (Vollmodell) und bestaetigt (i)-(iv)."""
+    inst = ds.basis()
+    m = build_model(inst)
+    m.Params.OutputFlag = 0
+    m.optimize()
+    print("\n" + "=" * 100)
+    print("AUFGABE 3 - Verifikation der neuen Basis (L=3)")
+    print("=" * 100)
+    if m.Status != GRB.OPTIMAL:
+        print(f"FEHLER: Basis nicht optimal (Status={_status_txt(m.Status)}).")
+        return
+
+    Ts = list(inst.perioden())
+    P = list(inst.produkte())
+    leerlauf = [t for t in Ts if sum(_val(m, f"x[{k},{t}]") for k in P) < 1e-6]
+    n_sb = sum(1 for t in Ts if _val(m, f"z_sb[{t}]") > 0.5)
+    n_aus = sum(1 for t in Ts if _val(m, f"z_aus[{t}]") > 0.5)
+    y_max = max(_val(m, f"y[{k},{t}]") for k in P for t in Ts)
+    lager_em = sum(inst.e_l[k] * _val(m, f"y[{k},{t}]") for k in P for t in Ts)
+    n_ok, checks = _konsistenz_checks(m, inst)
+
+    ok_i = (leerlauf == [4, 5, 6])
+    ok_ii = (n_aus == 0 and n_sb == 3)
+    ok_iii = (y_max > 1e-6)
+    ok_iv = (n_ok == 7)
+    print(f"  (i)   drei Leerlaufperioden t4-t6:           {'OK' if ok_i else 'FEHLT'} "
+          f"(leerlauf-Perioden = {leerlauf})")
+    print(f"  (ii)  ungestoert STANDBY in t4-t6, n_aus=0:  {'OK' if ok_ii else 'FEHLT'} "
+          f"(n_sb={n_sb}, n_aus={n_aus})")
+    print(f"  (iii) Lager aktiv (Vorproduktion P3-Spitze): {'OK' if ok_iii else 'FEHLT'} "
+          f"(y_max={y_max:.1f}, Lageremission={lager_em:.3f})")
+    print(f"  (iv)  alle 7 Konsistenz-Checks:              {'OK' if ok_iv else 'FEHLT'} "
+          f"({n_ok}/7)")
+    if not ok_iv:
+        for name, ok in checks:
+            if not ok:
+                print(f"          FEHLER bei {name}")
+
+
+# =============================================================================
+# AUFGABE 4 - alpha-/pi-Durchlauf wiederholen (Kernfrage: Emissionseffekt?)
+# =============================================================================
+def run_alpha_pi():
+    """AUFGABE 4: nur Achsen alpha {0.7,0.8,0.9} und pi {63,80,94}; Tabelle + Deutung."""
+    achsen = {
+        "alpha (Cap-Strenge)": [
+            ("alpha=0.7", ds.variante_alpha(0.7)),
+            ("alpha=0.8 (Basis)", ds.basis()),
+            ("alpha=0.9", ds.variante_alpha(0.9)),
+        ],
+        "pi (Zertifikatspreis)": [
+            ("pi_B=63", ds.variante_preise(63)),
+            ("pi_B=80 (Basis)", ds.basis()),
+            ("pi_B=94", ds.variante_preise(94)),
+        ],
+    }
+    print("\n" + "=" * 100)
+    print("AUFGABE 4 - alpha-/pi-Durchlauf auf der NEUEN L=3-Basis")
+    print("=" * 100)
+    for achse, punkte in achsen.items():
+        print(f"\nACHSE: {achse}")
+        zeilen = [_zeile(label, inst) for label, inst in punkte]
+        df = pd.DataFrame(zeilen)[
+            ["Variante", "E_kontrolliert", "E_referenz", "Delta_E", "Zukauf",
+             "Verkauf", "Z", "n_sb", "n_aus", "n_anlauf", "n_ruest", "Status"]
+        ]
+        display(df)
+        _interpret_alpha_pi(achse, zeilen)
+
+
+def _interpret_alpha_pi(achse, zeilen):
+    Es = [z["E_kontrolliert"] for z in zeilen if isinstance(z["E_kontrolliert"], (int, float))]
+    naus = [z["n_aus"] for z in zeilen if isinstance(z["n_aus"], (int, float))]
+    spann = (max(Es) - min(Es)) if Es else 0.0
+    rel = (spann / (sum(Es) / len(Es))) if Es and sum(Es) else 0.0
+    bewegt = rel >= 0.02
+    abschalt_aktiv = any(a > 0 for a in naus)
+
+    print(f"  - Bewegt sich E_kontrolliert? {'JA (analysefaehig)' if bewegt else 'NEIN - FLACH'} "
+          f"(E {min(Es):.3f}..{max(Es):.3f}, Spanne {spann:.3f} = {rel*100:.1f} %)")
+    print(f"  - Abschalten unter Druck (n_aus>0)? {'JA' if abschalt_aktiv else 'NEIN'} "
+          f"(n_aus je Punkt = {naus})")
+    if not bewegt:
+        print("  - BEFUND: Achse weiterhin FLACH in der Emission (nur Kosten/Zukauf/Verkauf "
+              "reagieren). Strukturelle Ursache: der Leerlauf-Zustand ist emissions-, nicht "
+              "preisdeterminiert; das Modell sitzt bereits am Emissionsboden (bei L=3 Standby, "
+              "da Abschalten 1.8 t > Standby 1.35 t emittiert).")
+        print("  - Vorgeschlagene naechste Stellschrauben (NICHT umgesetzt): "
+              "(a) Luecke L=4; (b) hoehere e_sb/e_an-Relation (g<3, damit Abschalten emissions-"
+              "guenstiger als Standby wird). CAVEAT (empirisch belegt): auch L=4/L=5 bewegen E "
+              "NICHT - der Zustand kippt zwar Standby->Aus, bleibt aber emissionsneutral. Ein "
+              "echter preiselastischer Minderungshebel (Kosten-gegen-Emission-Abwaegung) fehlt "
+              "im realistischen Preisband; alpha/pi sind dann prinzipiell nur Kostenachsen.")
+
+
 if __name__ == "__main__":
-    run_diagnose()
+    # Aktuelle Aufgabe: AUFGABE 2-4 auf der neuen L=3-Basis.
+    e_baseline_messen()
+    verifiziere_basis()
+    run_alpha_pi()
+    # Der vollstaendige 5-Achsen-Lauf bleibt verfuegbar:
+    #   run_diagnose()

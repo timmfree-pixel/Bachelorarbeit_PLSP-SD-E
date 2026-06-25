@@ -25,27 +25,27 @@ KALIBRIERUNG (a-priori; mit Baseline-Lauf zu verifizieren)
 ================================================================================
 Größe: K = 4 Produkte, T = 8 Mikroperioden, Startrüstung auf Produkt 1 (i_0 = 1).
 
-Bedarf (eine Bedarfsspitze je Periode; Lücke t5,t6; eine kapazitätssprengende
-Spitze in t4 erzwingt Vorproduktion -> Lager aktiv):
-    t1: P1=50   t2: P2=45   t3: -    t4: P3=70   t5: -   t6: -   t7: P4=50   t8: P1=40
-  -> Leerlaufperioden t5, t6 (für Idle/Standby/Aus).
-  -> t4-Bedarf (70) > Kapazität (60) erzwingt 10 Einheiten P3-Vorproduktion in t3
-     (Lageremission/-kosten aktiv, nicht optional).
+Bedarf (eine Bedarfsspitze je Periode; 3-Perioden-Lücke t4-t6; eine kapazitäts-
+sprengende Spitze in t3 erzwingt Vorproduktion -> Lager aktiv):
+    t1: P1=50   t2: P2=45   t3: P3=70   t4: -   t5: -   t6: -   t7: P4=50   t8: P1=40
+  -> Leerlaufperioden t4, t5, t6 (L=3, für Idle/Standby/Aus).
+  -> t3-Bedarf (70) > Kapazität (60) erzwingt 10 Einheiten P3-Vorproduktion (in t2
+     via Rüst-Carryover; Lageremission/-kosten aktiv, nicht optional).
 
-E_baseline (Schätzung der kostenminimalen Lösung, ohne Cap):
+E_baseline (GEMESSEN am Vollmodell-Optimum der L=3-Basis, nicht mehr geschätzt):
   Produktion : 255 Einheiten * e_p 0.01            = 2.55 t   (fix; Bedarf, kein Backlog)
-  Betrieb An : 6 An-Perioden * e_on 0.60           = 3.60 t
-  Standby    : 2 Perioden (t5,t6) * e_sb 0.45       = 0.90 t
-  Aus        : 0                                    = 0.00 t
+  Betrieb An : 5 An-Perioden * e_on 0.60           = 3.00 t   (t1,t2,t3,t7,t8)
+  Standby    : 3 Perioden (t4,t5,t6) * e_sb 0.45    = 1.35 t
+  Aus        : 0                                    = 0.00 t   (L=3 < Schwelle 4 -> Standby)
   Anlauf     : 0 (kein Aus->Ein im Basisfall)       = 0.00 t
   Rüsten     : 4 Wechsel * (e_fix 0.1 + e_var 0.02 * tr 3) = 4 * 0.16 = 0.64 t
   Lager      : 10 Einh. * 1 Periode * e_l(P3) 0.02  = 0.20 t
   --------------------------------------------------------------------
-  E_baseline ~ 7.9 t   (gerundet 8.0 t für die Zuteilung)
+  E_baseline = 7.74 t   (-> Konstante E_BASELINE_EST = 7.74)
 
 Cap / Zuteilung: Summe(A_t) = alpha * E_baseline, alpha = 0.8 (Basis).
-  -> A_t konstant ("glatt") = 0.8 * 8.0 / 8 = 0.80 je Periode; J_0 = 0.
-  -> Defizit ~ (1 - 0.8) * 7.9 ~ 1.5 t muss zugekauft werden (Cap bindet).
+  -> A_t konstant ("glatt") = 0.8 * 7.74 / 8 = 0.774 je Periode; J_0 = 0.
+  -> Defizit = (1 - 0.8) * 7.74 = 1.548 t muss zugekauft werden (Cap bindet).
 
 Skalen-Kommensurabilität:
   Losgrößenkosten (Basislösung): Rüsten s_2+s_3+s_4+s_1 = 25+39+28+51 = 143
@@ -55,13 +55,20 @@ Skalen-Kommensurabilität:
   Dies ist der Grund für die kleinen Emissionskoeffizienten (Emissionen in t CO2e):
   nur so ist der reale Preis 80 EUR/t mit den normierten Kosten (h=1) kommensurabel.
 
-Banking-Aktivierung: A_t glatt (0.80), Emissionsprofil klumpig (Produktionsperioden
-  ~1.1-1.8 t, Leerlaufperioden ~0.45 t). In t5,t6 wird Überschuss gebankt und in den
+Banking-Aktivierung: A_t glatt (0.774), Emissionsprofil klumpig (Produktionsperioden
+  ~1.1-1.8 t, Leerlaufperioden ~0.45 t). In t4-t6 wird Überschuss gebankt und in den
   Produktionsperioden t7,t8 verbraucht -> kumulative Bankinglogik wird aktiv.
 
-Standby-vs-Aus-Schwelle: Aus lohnt ab Lückenlänge L > e_an / (e_sb - e_aus)
-  = 1.8 / 0.45 = 4. Im Basisfall (Lücke L=2) gewinnt daher STANDBY; AUS zeigt sich
-  erst in der langen-Lücke-Variante (L>=4) bzw. bei kleinerem g.
+Standby-vs-Aus-Schwelle: Aus lohnt (emissionsseitig) erst ab Lückenlänge
+  L > e_an / (e_sb - e_aus) = 1.8 / 0.45 = 4. Im Basisfall (Lücke L=3) gewinnt daher
+  STANDBY (n_aus = 0); AUS zeigt sich erst ab L > 4 bzw. bei kleinerem g.
+
+WICHTIG (Diagnose-Befund, L=3): Der Leerlauf-Zustand ist EMISSIONSdeterminiert - das
+  Modell wählt stets den Emissionsboden (bei L=3 Standby, da Abschalten mit 1.8 t MEHR
+  emittiert als 3*0.45=1.35 t Standby). Cap-Strenge (alpha) und Preis (pi) bewegen die
+  Emission daher NICHT; sie ändern nur Zukauf/Verkauf/Kosten. Empirisch bestätigt für
+  L=3/L=4/L=5 (bei L=5 kippt der Zustand Standby->Aus unter Druck, doch E bleibt gleich).
+  Siehe diagnose_sensitivitaet.run_alpha_pi().
 """
 
 from __future__ import annotations
@@ -73,7 +80,8 @@ from instanz import Instanz
 
 # --- Quellen-/Kalibrierungskonstanten --------------------------------------------
 TBO = 3                 # [H]  Time-Between-Orders
-E_BASELINE_EST = 8.0    # geschätzte Baseline-Emission (t CO2e); siehe Herleitung oben
+E_BASELINE_EST = 7.74   # GEMESSENE Baseline-Emission (t CO2e) der L=3-Basis am Vollmodell-
+                        # Optimum (nicht mehr geschätzt); variante_alpha skaliert relativ dazu.
 ALPHA_BASIS = 0.8       # Cap-Strenge im Basisfall
 SPREAD_BASIS = 0.07     # [EUA] Geld-Brief-Spread pi^B -> pi^S
 PI_B_BASIS = 80.0       # [EUA] EUR/t
@@ -84,12 +92,17 @@ _E_L = {1: 0.03, 2: 0.04, 3: 0.02, 4: 0.03, 5: 0.03, 6: 0.03}
 
 # --- Hilfsfunktionen -------------------------------------------------------------
 def _demand_eintraege(K: int) -> dict:
-    """Bedarfsspitzen (nur Nicht-Null-Einträge). K>4 füllt die Leerlaufperioden."""
-    d = {(1, 1): 50.0, (2, 2): 45.0, (3, 4): 70.0, (4, 7): 50.0, (1, 8): 40.0}
+    """Bedarfsspitzen (nur Nicht-Null-Einträge); 3-Perioden-Lücke t4-t6. K>4 füllt die
+    Lücke von vorne (dichtere Sequenzstruktur).
+
+    P3-Spitze (70 > Kapazität 60) liegt in t3 -> erzwingt weiterhin 10 Einh.
+    Vorproduktion (Lager aktiv); hintere Bedarfe auf t7/t8 (nach der Lücke).
+    """
+    d = {(1, 1): 50.0, (2, 2): 45.0, (3, 3): 70.0, (4, 7): 50.0, (1, 8): 40.0}
     if K >= 5:
-        d[(5, 5)] = 40.0      # füllt t5 -> reduziert Leerlauf (Sequenzstruktur dichter)
+        d[(5, 4)] = 40.0      # füllt t4 (vorderste Lückenperiode)
     if K >= 6:
-        d[(6, 6)] = 40.0      # füllt t6
+        d[(6, 5)] = 40.0      # füllt t5
     return d
 
 
