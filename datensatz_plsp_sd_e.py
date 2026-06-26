@@ -267,6 +267,46 @@ def variante_ruestemission(m: float, basis_inst: Instanz) -> Instanz:
     )
 
 
+def basis_buendelbar(K: int = 4, T: int = 8, D: float = 20.0,
+                     b_wert: float = 80.0, e_l_wert: float = 0.01) -> Instanz:
+    """Bedarf MIT Buendelungsspielraum (Forts. der Diagnose: Rust-Lager-Trade-off).
+
+    Jedes Produkt wird ZWEIMAL nachgefragt (zwei Runden): P_k in Periode k (Runde 1)
+    und in Periode k+4 (Runde 2), je D Einheiten. Das eroeffnet eine echte Losgroessen-
+    Wahl, die ``basis()``/``basis_freielager()`` (eine Spitze je Produkt) NICHT hat:
+
+      - JIT (kostenoptimal bei kleiner Ruestemission): jede Nachfrage ein eigenes Los
+        -> die Maschine wechselt staendig hin und her -> viele Ruestwechsel (n_ruest ~ 7).
+      - Buendeln (emissionsoptimal bei grosser Ruestemission): beide Nachfragen eines
+        Produkts in EINEM Los (Runde-2-Bedarf wird vorgezogen und gelagert)
+        -> wenige Ruestwechsel (n_ruest ~ 3), dafuer mehr Lager.
+
+    Kalibrierung (bewusst, fuer einen sauberen Hebel; uebrige Parameter aus ``basis``):
+      - b_t = 80 (> 2*D = 40): freies Lager, Buendeln zulaessig und NICHT erzwungen.
+      - h_k = 1 (aus basis): die Lager-KOSTEN halten JIT bei kleiner Ruestemission
+        kostenoptimal (Buendel-Lagerkosten > Ruestkosten-Ersparnis) -> Spielraum nach oben.
+      - e_l = 0.01 (klein, uniform): kleine Lager-EMISSION, damit der Ruest-Emissions-
+        Hebel den Emissions-Trade-off dominiert (Buendeln senkt dann E).
+      - s_k via TBO aus dem neuen Bedarf (wie in basis).
+
+    ACHTUNG: anderer Bedarf -> andere E_baseline; A_t in der Diagnose pro m neu
+    kalibrieren (``diagnose_ruestemission`` tut das).
+    """
+    eintr = {}
+    for k in range(1, K + 1):
+        eintr[(k, k)] = float(D)              # Runde 1
+        if k + 4 <= T:
+            eintr[(k, k + 4)] = float(D)      # Runde 2 (Buendelungsspielraum)
+    d = _voll_d(K, T, eintr)
+    return replace(
+        basis(K, T),
+        d=d,
+        s=_ruestkosten(d, K, T),
+        b={t: b_wert for t in range(1, T + 1)},
+        e_l={k: e_l_wert for k in range(1, K + 1)},
+    )
+
+
 # --- Standalone-Übersicht (optional, zur Kontrolle vor dem Lösen) ----------------
 if __name__ == "__main__":
     inst = basis()

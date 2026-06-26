@@ -205,10 +205,114 @@ def run(K=4, T=8):
             print("  Vorproduktion, schafft aber keinen DISKRETIONAEREN Buendelungsspielraum.")
             print("  Ohne Rust-Lager-Trade-off bleibt die Setup-Emission ein FIXER E-Anteil ->")
             print("  alpha/pi wirken nur auf Zukauf/Verkauf/Kosten, nicht auf die Emission.")
-            print("  REMEDY (nicht umgesetzt): Bedarf mit MEHRFACH-Nachfrage je Produkt (echter")
-            print("  Buendelungsspielraum), damit hohe Ruestemission Losgroessen-Buendelung lohnt.")
+            print("  REMEDY (umgesetzt in run_buendelbar): Bedarf mit MEHRFACH-Nachfrage je")
+            print("  Produkt (basis_buendelbar) schafft Buendelungsspielraum; dort wird der Preis")
+            print("  pi ab m=5 emissionswirksam (alpha bleibt als Lump-sum-Transfer neutral).")
+    return uebersicht
+
+
+def run_buendelbar(K=4, T=8):
+    """FORTSETZUNG: 2D-Durchlauf auf basis_buendelbar() (Bedarf MIT Buendelungsspielraum).
+
+    Zeigt, ab welchem m die Achsen emissionswirksam werden, wenn der Bedarf eine echte
+    Losgroessen-Wahl zulaesst (jedes Produkt zweimal nachgefragt -> JIT vs. Buendeln).
+    """
+    print("=" * 100)
+    print("FORTSETZUNG - 2D-Durchlauf auf basis_buendelbar() (Bedarf MIT Buendelungsspielraum)")
+    print("=" * 100)
+
+    # Beleg fuer den Hebel: n_ruest faellt mit m (JIT -> Buendeln), lager steigt
+    beleg = []
+    for mstu in M_STUFEN:
+        k = _metrik(ds.variante_ruestemission(mstu, ds.basis_buendelbar(K, T)),
+                    f"m={mstu}", e_base=1.0)
+        beleg.append({"m": mstu, "n_ruest": k["n_ruest"],
+                      "lager_menge": k["lager_menge"], "E_kontrolliert": k["E_kontrolliert"]})
+    print("Hebel-Beleg (Basis-Konfig je m): JIT (hohes n_ruest) -> Buendeln (niedriges n_ruest):")
+    display(pd.DataFrame(beleg))
+    print()
+
+    uebersicht = []
+    for mstu in M_STUFEN:
+        base_m = ds.variante_ruestemission(mstu, ds.basis_buendelbar(K, T))
+        e_base = _e_total(base_m)
+        if e_base is None:
+            print(f"m={mstu}: Baseline nicht optimal - uebersprungen.")
+            continue
+        alpha_rows = [
+            _metrik(replace(base_m, A=ds._A_konstant(a, T, e_base=e_base)),
+                    f"alpha={a}", e_base) for a in ALPHAS
+        ]
+        base_cal = replace(base_m, A=ds._A_konstant(ds.ALPHA_BASIS, T, e_base=e_base))
+        pi_rows = [
+            _metrik(replace(base_cal, pi_B=p, pi_S=p * (1.0 - ds.SPREAD_BASIS)),
+                    f"pi_B={p}", e_base) for p in PIS
+        ]
+
+        print("=" * 100)
+        print(f"m = {mstu:2d}   E_baseline(m) = {e_base:.4f} t")
+        print("=" * 100)
+        print(f"[m={mstu}] ALPHA-Achse (Cap-Strenge),  A_t = alpha * E_baseline / T:")
+        display(pd.DataFrame(alpha_rows)[COLS])
+        print(f"[m={mstu}] PI-Achse (Zertifikatspreis),  alpha = {ds.ALPHA_BASIS} fix:")
+        display(pd.DataFrame(pi_rows)[COLS])
+        print()
+
+        sa, sp = _spanne(alpha_rows), _spanne(pi_rows)
+        # Welcher STRUKTUR-Hebel reagiert ueber die pi-Achse? Bei festem m ist n_ruest
+        # konstant; pi steuert die Buendelungs-TIEFE (lager_menge) und den dadurch
+        # entstehenden Nach-Stillstand (Standby->Aus, n_aus). Daher diese als Indikator.
+        uebersicht.append({
+            "m": mstu, "E_baseline": round(e_base, 4),
+            "E-Spanne_alpha_%": round(100.0 * sa / e_base, 3),
+            "E-Spanne_pi_%": round(100.0 * sp / e_base, 3),
+            "lager_D(pi)": round(_spanne(pi_rows, "lager_menge"), 1),
+            "n_aus_D(pi)": int(_spanne(pi_rows, "n_aus")),
+            "n_ruest_D(pi)": int(_spanne(pi_rows, "n_ruest")),
+            "alpha_wirksam": "JA" if 100.0 * sa / e_base > SCHWELLE_PCT else "nein",
+            "pi_wirksam": "JA" if 100.0 * sp / e_base > SCHWELLE_PCT else "nein",
+        })
+
+    print("=" * 100)
+    print("UEBERSICHT (buendelbar): ab welchem m werden alpha / pi emissionswirksam?")
+    print(f"(emissionswirksam := E-Spanne ueber die Achse > {SCHWELLE_PCT:.0f} % der Baseline)")
+    print("=" * 100)
+    dfu = pd.DataFrame(uebersicht)[
+        ["m", "E_baseline", "E-Spanne_alpha_%", "E-Spanne_pi_%",
+         "lager_D(pi)", "n_aus_D(pi)", "n_ruest_D(pi)", "alpha_wirksam", "pi_wirksam"]
+    ]
+    display(dfu)
+
+    def _schwelle(feld):
+        for r in uebersicht:
+            if r[feld] == "JA":
+                return r["m"]
+        return None
+
+    sp_m, sa_m = _schwelle("pi_wirksam"), _schwelle("alpha_wirksam")
+    print()
+    print(f"SCHWELLE  pi    emissionswirksam ab m = "
+          f"{sp_m if sp_m is not None else 'NICHT erreicht'}")
+    print(f"SCHWELLE  alpha emissionswirksam ab m = "
+          f"{sa_m if sa_m is not None else 'NICHT erreicht (bleibt 0 %)'}")
+    print("\nBEFUND (Kernaussage der Fortsetzung):")
+    print(f"  - Der Faktor m aktiviert den Buendelungs-Hebel: ueber m faellt n_ruest 7 -> 3")
+    print("    (Hebel-Beleg oben), Lager steigt -> Setup-Emission wird gegen Lager getauscht.")
+    print(f"  - MIT diesem Spielraum wird der PREIS pi ab m={sp_m} emissionswirksam (E-Spanne")
+    print("    bis ~10 %). Kanal bei festem m: hoeheres pi -> TIEFERE Buendelung (lager_D>0)")
+    print("    -> laengerer Nach-Stillstand, der ABGESCHALTET statt Standby gefahren wird")
+    print("    (n_aus_D>0) -> E faellt. (n_ruest selbst reagiert auf m, nicht auf pi.)")
+    print("  - alpha bleibt AUCH hier emissionsneutral (0 %). Oekonomisch korrekt: die")
+    print("    Gratiszuteilung ist ein LUMP-SUM-Transfer - sie aendert Zukauf/Verkauf/Kosten,")
+    print("    aber NICHT den Grenz-Vermeidungsanreiz. Dieser ist der Preis pi (Grenz-Zukauf")
+    print("    zu pi_B). Da B_t unbeschraenkt ist, erzwingt der Cap nie Vermeidung.")
+    print("  - FAZIT: Emissionswirkung braucht ZWEI Zutaten - (i) einen realen Vermeidungs-")
+    print(f"    hebel (Buendelungsspielraum + hinreichend grosse Ruestemission, hier m>={sp_m})")
+    print("    UND (ii) ein PREIS-Signal (pi). Die Cap-MENGE (alpha) allein wirkt nie.")
     return uebersicht
 
 
 if __name__ == "__main__":
     run()
+    print("\n\n")
+    run_buendelbar()
