@@ -237,6 +237,36 @@ def variante_produktzahl(K: int, T: int = 8) -> Instanz:
     return basis(K, T)
 
 
+# --- Diagnose-Erweiterung: freies Lager + gestufte Ruestemission ----------------
+def basis_freielager(K: int = 4, T: int = 8, b_wert: float = 80.0) -> Instanz:
+    """Basis OHNE kapazitaetserzwungene Vorproduktion (AUFGABE 1).
+
+    Ursache der erzwungenen Vorproduktion in ``basis()`` ist die Bedarfsspitze
+    d_{3,3}=70 > Kapazitaet b_t=60 (10 Einh. P3 muessen in t2 vorgezogen werden).
+    Hier wird b_t so angehoben (Default 80), dass KEINE Periodennachfrage die
+    Kapazitaet uebersteigt (groesste Spitze 70 < 80) -> Vorproduktion wird OPTIONAL
+    statt erzwungen. Bedarfsstruktur, Luecke t4-t6 und alle uebrigen Parameter
+    bleiben unveraendert. (Diagnostische Datensatz-Variante; Modell unveraendert.)
+    """
+    return replace(basis(K, T), b={t: b_wert for t in range(1, T + 1)})
+
+
+def variante_ruestemission(m: float, basis_inst: Instanz) -> Instanz:
+    """Skaliert NUR die Ruestemissionen e_fix und e_var mit dem Faktor m (AUFGABE 2).
+
+    Ruestkosten s_k und Ruestzeiten tr bleiben UNVERAENDERT - es geht rein um die
+    physikalische Emission des Sortenwechsels (warm-up). m=1 reproduziert die
+    uebergebene Basis.
+
+        e_fix_neu = m * e_fix,   e_var_neu = m * e_var.
+    """
+    return replace(
+        basis_inst,
+        e_fix={ik: m * v for ik, v in basis_inst.e_fix.items()},
+        e_var=m * basis_inst.e_var,
+    )
+
+
 # --- Standalone-Übersicht (optional, zur Kontrolle vor dem Lösen) ----------------
 if __name__ == "__main__":
     inst = basis()
